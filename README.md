@@ -1,6 +1,6 @@
 # TrustLine
 
-**An on-chain credit registry and lending protocol for AI agents — underwritten by verified revenue, not wallet history.**
+**An on-chain, credit-based lending protocol for AI agents — borrowing power is underwritten by verified revenue, not wallet history.**
 
 > Think Helixa, but the score isn't a credibility badge — it's a real lending decision.
 
@@ -18,8 +18,10 @@
 - [Project structure](#project-structure)
 - [Competitive landscape](#competitive-landscape)
 - [Why TrustLine wins](#why-trustline-wins)
+- [Risk model and economics](#risk-model-and-economics)
 - [Roadmap](#roadmap)
 - [Getting started](#getting-started)
+- [License](#license)
 - [Disclaimer](#disclaimer)
 
 ---
@@ -45,15 +47,15 @@ Nobody turns an agent's *actual, provable* income into usable, uncollateralized 
 
 ## Solution
 
-**TrustLine is a credit registry for AI agents, plus the first lending protocol built to consume it.**
+**TrustLine is one protocol: it lends to AI agents, sized against their verified revenue, instead of requiring collateral or trusting a reputation score that was never built to predict repayment.**
 
-It computes a portable, on-chain credit score from three verifiable revenue signals:
+An agent registers, gets underwritten, borrows, and repays — that's the whole product from the outside. Under the hood, borrowing power comes from three verifiable revenue signals, computed as part of the same lending flow rather than as a separate product an agent has to go get first:
 
 1. **On-chain x402 earnings** — already on a public ledger, so no proof system is needed, just an indexer.
 2. **Off-chain revenue, zkTLS-attested** — Stripe payouts, exchange balances, API marketplace earnings, proven without exposing the underlying account.
 3. **Strategy performance, zkML-attested** *(v2 stretch goal)* — a cryptographic proof that a trading agent's claimed track record actually came from the model it says it ran.
 
-That score sets an isolated, per-agent credit line — never a shared pool — and every disbursement and repayment settles autonomously over x402. No human approves the loan. No agent's default touches anyone else's deposit.
+Every credit line TrustLine opens is isolated to that one agent — never a shared pool — and every disbursement and repayment settles autonomously over x402. No human approves the loan. No agent's default touches anyone else's deposit.
 
 ## Key features
 
@@ -61,7 +63,7 @@ That score sets an isolated, per-agent credit line — never a shared pool — a
 - **Isolated risk per agent** — every credit line is its own vault; no pooled, socialized losses.
 - **x402-native settlement** — disbursement, repayment, and interest all move autonomously in USDC.
 - **Portable score** — anchored to an ERC-8004 identity, so it's usable by other lenders, not locked into TrustLine.
-- **Composable by design** — the scoring oracle is independently useful even to protocols that never touch TrustLine's lending side.
+- **Composable by design** — the underwriting logic is exposed on-chain, so other lenders can read an agent's TrustLine standing even if they never use TrustLine's own credit lines.
 
 ## Why this is required now
 
@@ -71,6 +73,8 @@ That score sets an isolated, per-agent credit line — never a shared pool — a
 - Pooled, uncollateralized DeFi lending has a well-documented history of blowing up when one borrower's risk wasn't actually isolated from everyone else's. TrustLine is designed around that lesson from day one, not retrofitted after a default.
 
 ## Architecture
+
+TrustLine has two technical layers that only function together — neither does anything useful on its own. An off-chain underwriting engine computes borrowing power; on-chain contracts hold funds and enforce whatever it decides. That's one protocol with a hybrid execution model, the same way most lending markets lean on an oracle without being "two products."
 
 ```mermaid
 flowchart LR
@@ -84,13 +88,13 @@ flowchart LR
         ID["ERC-8004 identity registry"]
     end
 
-    subgraph Off["Scoring service (Node.js, off-chain)"]
+    subgraph Off["Underwriting engine (off-chain, Node.js)"]
         IDX["Revenue indexer"]
         PRF["Proof orchestrator"]
         ENG["Score engine"]
     end
 
-    subgraph On["Contracts (Foundry, Base)"]
+    subgraph On["Protocol contracts (Foundry, Base)"]
         REG["ScoreRegistry.sol"]
         LINE["CreditLine.sol"]
         VAULT["LendingVault.sol"]
@@ -117,14 +121,14 @@ flowchart LR
     X4 -- "repayment outcome" --> REG
 ```
 
-**MVP-stage honesty:** the score engine ships as a single trusted signer for the hackathon build, not a decentralized AVS. That's a deliberate scope cut — see [Roadmap](#roadmap) — not an oversight.
+**MVP-stage honesty:** the underwriting engine runs as a single trusted signer for the hackathon build, not a decentralized AVS. That's a deliberate scope cut — see [Roadmap](#roadmap) — not an oversight.
 
 ## User flow
 
 ```mermaid
 sequenceDiagram
     participant Agent
-    participant Oracle as Scoring service
+    participant Oracle as Underwriting engine
     participant Registry as ScoreRegistry
     participant Vault as LendingVault
     participant Lender
@@ -181,7 +185,7 @@ trustline/
 │   ├── foundry.toml
 │   └── remappings.txt
 │
-├── backend/                       # Node.js scoring service
+├── backend/                       # Node.js underwriting engine (off-chain layer of the protocol)
 │   ├── src/
 │   │   ├── indexer/                # x402 receipt indexing
 │   │   ├── zktls/                  # proof request + verification
@@ -222,9 +226,21 @@ trustline/
 
 - **Timing**: x402 and ERC-8004 both matured in the last few months — this product wasn't buildable cleanly a year ago, and it's not yet a commodity today.
 - **Avoids the model that's already failed twice**: agent *tokenization* (Virtuals, Olas) has a rough track record even for technically excellent teams. TrustLine isn't a token-and-speculate model — it's a fee-and-interest business backed by real cash flow.
-- **Built on a standard, not a silo**: anchoring to ERC-8004 instead of a proprietary registry means the score is useful to lenders who never touch TrustLine directly — that's how this gets distribution instead of staying a walled garden.
+- **Built on a standard, not a silo**: TrustLine anchors its underwriting to ERC-8004 instead of inventing a proprietary registry, so other lenders can read an agent's TrustLine standing even if they never touch TrustLine's own credit lines — that's how this gets distribution instead of staying a walled garden.
 - **Risk isolation from day one**: no pooled lending, no socialized losses — designed around the exact failure mode that has hit prior uncollateralized DeFi lending protocols.
 - **A genuinely new signal**: nobody else is attempting the zkML strategy-performance proof. It's the hardest part and explicitly scoped as a stretch goal, not a blocker — but it's the piece with no precedent anywhere in this space.
+
+## Risk model and economics
+
+These were the most significant open questions in the design — worth answering explicitly here rather than leaving them implicit.
+
+**How a lender is actually protected.** Isolating risk per agent (no pooled vaults) stops one agent's default from touching another lender's deposit — it does not eliminate risk for the lender exposed to that specific agent. For the MVP, that's intentional and transparent: a lender chooses which agent's credit line to fund, sees that agent's underwriting history before depositing, and accepts agent-specific default risk in exchange for a higher yield than a pooled market would pay. A protocol-level reserve fund, capitalized from a slice of origination fees, is a natural v2 addition for lenders who'd rather diversify than pick agents directly — out of scope for the hackathon build, called out here so it doesn't look like an oversight.
+
+**Interest rate model.** MVP default: a fixed APR per underwriting tier, set when a lender funds a specific agent's credit line, rather than a pooled utilization curve — utilization curves matter when liquidity is shared across many borrowers, which doesn't apply cleanly to isolated, single-agent vaults. Rate bands per tier are a parameter to tune against real test data, not a number to lock in before any exists.
+
+**Sybil and wash-trading resistance.** The most exploitable attack on this whole model: an operator pays their own agent from a second wallet they also control, manufacturing fake x402 "revenue." MVP mitigation: revenue only counts toward underwriting if it comes from a minimum number of independently-identified counterparties, and zkTLS-proved off-chain revenue is weighted more heavily, since faking a real Stripe or exchange account is a meaningfully higher bar than looping a wallet. This needs real anti-Sybil heuristics beyond the hackathon scope — flagging it now rather than letting it surface during judging or, worse, after a real deposit.
+
+**No speculative token.** TrustLine does not have a governance or rewards token, by design. The neighboring category — agent tokenization, à la Virtuals and Olas — has a rough track record specifically because token speculation became the product instead of the underlying credit business. TrustLine's revenue is interest spread and origination fees on real loans, not token issuance. Stating this outright so it isn't assumed by omission.
 
 ## Roadmap
 
@@ -258,6 +274,10 @@ cd frontend && npm install && npm run dev
 ```
 
 Environment variables and deployment addresses will live in `.env.example` files in each package as they're finalized.
+
+## License
+
+MIT — consistent with the open, standards-based positioning above. Easy to revisit before any public repo or mainnet deployment if the team wants different terms.
 
 ## Disclaimer
 
